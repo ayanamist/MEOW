@@ -13,7 +13,7 @@ var pac struct {
 
 func init() {
 	const pacRawTmpl = `var direct = 'DIRECT';
-var httpProxy = 'PROXY {{.ProxyAddr}}; DIRECT';
+var httpProxy = 'PROXY {{.ProxyAddr}}';
 
 var domainList = [
 "{{.DirectDomains}}"
