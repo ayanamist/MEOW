@@ -369,7 +369,7 @@ func (h *Header) parseConnection(s []byte) error {
 }
 
 func (h *Header) parseContentLength(s []byte) (err error) {
-	h.ContLen, err = ParseIntFromBytes(s, 10)
+	h.ContLen, err = ParseIntFromBytes(bytes.TrimSuffix(s, []byte{';'}), 10)
 	return err
 }
 
