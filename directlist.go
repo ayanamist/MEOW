@@ -30,7 +30,7 @@ func newDomainList() *DomainList {
 
 func (domainList *DomainList) judge(url *URL) (domainType DomainType) {
 	debug.Printf("judging host: %s", url.Host)
-	if domainList.Domain[url.Host] == domainTypeReject || domainList.Domain[url.Domain] == domainTypeReject {
+	if domainList.get(url.Host) == domainTypeReject || domainList.get(url.Domain) == domainTypeReject {
 		debug.Printf("host or domain should reject")
 		return domainTypeReject
 	}
@@ -40,11 +40,11 @@ func (domainList *DomainList) judge(url *URL) (domainType DomainType) {
 	if url.Domain == "" { // simple host or private ip
 		return domainTypeDirect
 	}
-	if domainList.Domain[url.Host] == domainTypeDirect || domainList.Domain[url.Domain] == domainTypeDirect {
+	if domainList.get(url.Host) == domainTypeDirect || domainList.get(url.Domain) == domainTypeDirect {
 		debug.Printf("host or domain should direct")
 		return domainTypeDirect
 	}
-	if domainList.Domain[url.Host] == domainTypeProxy || domainList.Domain[url.Domain] == domainTypeProxy {
+	if domainList.get(url.Host) == domainTypeProxy || domainList.get(url.Domain) == domainTypeProxy {
 		debug.Printf("host or domain should using proxy")
 		return domainTypeProxy
 	}
@@ -85,7 +85,15 @@ func (domainList *DomainList) add(host string, domainType DomainType) {
 	domainList.Domain[host] = domainType
 }
 
+func (domainList *DomainList) get(host string) DomainType {
+	domainList.RLock()
+	defer domainList.RUnlock()
+	return domainList.Domain[host]
+}
+
 func (domainList *DomainList) GetDomainList() []string {
+	domainList.RLock()
+	defer domainList.RUnlock()
 	lst := make([]string, 0)
 	for site, domainType := range domainList.Domain {
 		if domainType == domainTypeDirect {
