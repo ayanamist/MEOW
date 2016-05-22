@@ -85,6 +85,7 @@ func printParentProxy(parent []ParentWithFail) {
 type ParentWithFail struct {
 	ParentProxy
 	fail int
+	sync.RWMutex
 }
 
 // Backup load balance strategy:
@@ -98,7 +99,7 @@ func (pp *backupParentPool) empty() bool {
 }
 
 func (pp *backupParentPool) add(parent ParentProxy) {
-	pp.parent = append(pp.parent, ParentWithFail{parent, 0})
+	pp.parent = append(pp.parent, ParentWithFail{parent, 0, sync.RWMutex{}})
 }
 
 func (pp *backupParentPool) connect(url *URL) (srvconn net.Conn, err error) {
@@ -120,6 +121,8 @@ func (pp *hashParentPool) connect(url *URL) (srvconn net.Conn, err error) {
 func (parent *ParentWithFail) connect(url *URL) (srvconn net.Conn, err error) {
 	const maxFailCnt = 30
 	srvconn, err = parent.ParentProxy.connect(url)
+	parent.Lock()
+	defer parent.Unlock()
 	if err != nil {
 		if parent.fail < maxFailCnt {
 			parent.fail++
@@ -143,7 +146,10 @@ func connectInOrder(url *URL, pp []ParentWithFail, start int) (srvconn net.Conn,
 		proxyId := (start + i) % nproxy
 		parent := &pp[proxyId]
 		// skip failed server, but try it with some probability
-		if parent.fail > 0 && rand.Intn(parent.fail+baseFailCnt) != 0 {
+		parent.RLock()
+		fail := parent.fail
+		parent.RUnlock()
+		if fail > 0 && rand.Intn(fail+baseFailCnt) != 0 {
 			skipped = append(skipped, proxyId)
 			continue
 		}
