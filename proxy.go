@@ -867,7 +867,7 @@ func copyServer2Client(sv *serverConn, c *clientConn, r *Request) (err error) {
 		}
 		// debug.Printf("srv(%s)->cli(%s) sent %d bytes data\n", r.URL.HostPort, c.RemoteAddr(), total)
 		// set state to rsRecvBody to indicate the request has partial response sent to client
-		r.state = rsRecvBody
+		r.State(rsRecvBody)
 		sv.state = svSendRecvResponse
 	}
 }
@@ -974,15 +974,17 @@ func (sv *serverConn) doConnect(r *Request, c *clientConn) (err error) {
 		}
 	}
 
-	var cli2srvErr error
+	cli2srvErr := make(chan error, 1)
 	done := make(chan struct{})
 	srvStopped := newNotification()
 	go func() {
 		debug.Printf("989: doConnect: cli(%s)->srv(%s)\n", c.RemoteAddr(), r.URL.HostPort)
-		cli2srvErr = copyClient2Server(c, sv, r, srvStopped, done)
+		err := copyClient2Server(c, sv, r, srvStopped, done)
+		sv.Close()
+		cli2srvErr <- err
+		close(cli2srvErr)
 		// Close sv to force read from server in copyServer2Client return.
 		// Note: there's no other code closing the server connection for CONNECT.
-		sv.Close()
 	}()
 
 	// debug.Printf("doConnect: srv(%s)->cli(%s)\n", r.URL.HostPort, c.RemoteAddr())
@@ -994,8 +996,9 @@ func (sv *serverConn) doConnect(r *Request, c *clientConn) (err error) {
 		// close client connection to force read from client in copyClient2Server return
 		c.Conn.Close()
 	}
-	if cli2srvErr != nil {
-		return cli2srvErr
+	err = <- cli2srvErr
+	if err != nil {
+		return err
 	}
 	return
 }

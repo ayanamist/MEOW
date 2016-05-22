@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync"
 )
 
 const CRLF = "\r\n"
@@ -62,6 +63,7 @@ type Request struct {
 	isConnect bool
 	partial   bool // whether contains only partial request data
 	state     rqState
+	stateLock sync.RWMutex
 }
 
 // Assume keep-alive request by default.
@@ -104,11 +106,23 @@ func (r *Request) hasBody() bool {
 	return r.Chunking || r.ContLen > 0
 }
 
+func (r *Request) State(state rqState) {
+	r.stateLock.Lock()
+	defer r.stateLock.Unlock()
+	if r.state < state {
+		r.state = state
+	}
+}
+
 func (r *Request) responseNotSent() bool {
-	return r.state <= rsSent
+	r.stateLock.RLock()
+	defer r.stateLock.RUnlock()
+	return r.state < rsSent
 }
 
 func (r *Request) hasSent() bool {
+	r.stateLock.RLock()
+	defer r.stateLock.RUnlock()
 	return r.state >= rsSent
 }
 
