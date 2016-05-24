@@ -220,7 +220,7 @@ func (pp proxyParser) ProxyHttps(val string) {
 }
 
 // Parse method:passwd@server:port
-func parseMethodPasswdServer(val string) (method, passwd, server string, err error) {
+func parseMethodPasswdServer(val string) (method, passwd, server, param string, err error) {
 	// Use the right-most @ symbol to seperate method:passwd and server:port.
 	idx := strings.LastIndex(val, "@")
 	if idx == -1 {
@@ -230,6 +230,13 @@ func parseMethodPasswdServer(val string) (method, passwd, server string, err err
 
 	methodPasswd := val[:idx]
 	server = val[idx+1:]
+	idx = strings.LastIndex(server, "?")
+	if idx > -1 {
+		param = server[idx+1:]
+		server = server[:idx]
+	} else {
+		param = ""
+	}
 	if err = checkServerAddr(server); err != nil {
 		return
 	}
@@ -247,27 +254,12 @@ func parseMethodPasswdServer(val string) (method, passwd, server string, err err
 
 // parse shadowsocks proxy
 func (pp proxyParser) ProxySs(val string) {
-	method, passwd, server, err := parseMethodPasswdServer(val)
+	method, passwd, server, _, err := parseMethodPasswdServer(val)
 	if err != nil {
 		Fatal("shadowsocks parent", err)
 	}
 	parent := newShadowsocksParent(server)
 	parent.initCipher(method, passwd)
-	parentProxy.add(parent)
-}
-
-func (pp proxyParser) ProxyMeow(val string) {
-	method, passwd, server, err := parseMethodPasswdServer(val)
-	if err != nil {
-		Fatal("meow parent", err)
-	}
-
-	if err := checkServerAddr(server); err != nil {
-		Fatal("parent meow server", err)
-	}
-
-	config.saveReqLine = true
-	parent := newMeowParent(server, method, passwd)
 	parentProxy.add(parent)
 }
 
@@ -294,17 +286,6 @@ func (lp listenParser) ListenHttp(val string, proto string) {
 		Fatal("listen", proto, "server", err)
 	}
 	addListenProxy(newHttpProxy(addr, addrInPAC, proto))
-}
-
-func (lp listenParser) ListenMeow(val string) {
-	if cmdHasListenAddr {
-		return
-	}
-	method, passwd, addr, err := parseMethodPasswdServer(val)
-	if err != nil {
-		Fatal("listen meow", err)
-	}
-	addListenProxy(newMeowProxy(method, passwd, addr))
 }
 
 // configParser provides functions to parse options in config file.

@@ -76,8 +76,6 @@ func printParentProxy(parent []ParentWithFail) {
 			debug.Println("\thttp parent: ", pc.server)
 		case *socksParent:
 			debug.Println("\tsocks parent: ", pc.server)
-		case *meowParent:
-			debug.Println("\tmeow parent: ", pc.server)
 		}
 	}
 }
@@ -430,6 +428,7 @@ type shadowsocksParent struct {
 	server string
 	method string // method and passwd are for upgrade config
 	passwd string
+	obfs   string
 	cipher *ss.Cipher
 }
 
@@ -472,6 +471,10 @@ func (sp *shadowsocksParent) initCipher(method, passwd string) {
 	sp.cipher = cipher
 }
 
+func (sp *shadowsocksParent) initObfs(obfs string) {
+	sp.obfs = obfs
+}
+
 func (sp *shadowsocksParent) connect(url *URL) (net.Conn, error) {
 	c, err := ss.Dial(url.HostPort, sp.server, sp.cipher.Copy())
 	if err != nil {
@@ -481,56 +484,6 @@ func (sp *shadowsocksParent) connect(url *URL) (net.Conn, error) {
 	}
 	debug.Println("connected to:", url.HostPort, "via shadowsocks:", sp.server)
 	return shadowsocksConn{c, sp}, nil
-}
-
-// meow parent proxy
-type meowParent struct {
-	server string
-	method string
-	passwd string
-	cipher *ss.Cipher
-}
-
-type meowConn struct {
-	net.Conn
-	parent *meowParent
-}
-
-func (s meowConn) String() string {
-	return "meow proxy " + s.parent.server
-}
-
-func newMeowParent(srv, method, passwd string) *meowParent {
-	cipher, err := ss.NewCipher(method, passwd)
-	if err != nil {
-		Fatal("create meow cipher:", err)
-	}
-	return &meowParent{srv, method, passwd, cipher}
-}
-
-func (cp *meowParent) getServer() string {
-	return cp.server
-}
-
-func (cp *meowParent) genConfig() string {
-	method := cp.method
-	if method == "" {
-		method = "table"
-	}
-	return fmt.Sprintf("proxy = meow://%s:%s@%s", method, cp.passwd, cp.server)
-}
-
-func (cp *meowParent) connect(url *URL) (net.Conn, error) {
-	c, err := net.Dial("tcp", cp.server)
-	if err != nil {
-		errl.Printf("can't connect to meow parent %s for %s: %v\n",
-			cp.server, url.HostPort, err)
-		return nil, err
-	}
-	debug.Printf("connected to: %s via meow parent: %s\n",
-		url.HostPort, cp.server)
-	ssconn := ss.NewConn(c, cp.cipher.Copy())
-	return meowConn{ssconn, cp}, nil
 }
 
 // For socks documentation, refer to rfc 1928 http://www.ietf.org/rfc/rfc1928.txt
