@@ -428,8 +428,8 @@ type shadowsocksParent struct {
 	server string
 	method string // method and passwd are for upgrade config
 	passwd string
-	obfs   string
 	cipher *ss.Cipher
+	obfs   ss.Obfuscator
 }
 
 type shadowsocksConn struct {
@@ -472,11 +472,16 @@ func (sp *shadowsocksParent) initCipher(method, passwd string) {
 }
 
 func (sp *shadowsocksParent) initObfs(obfs string) {
-	sp.obfs = obfs
+	var err error
+	sp.obfs, err = ss.NewObfuscator(obfs)
+	if err != nil {
+		errl.Println("ss.NewObfuscator fail: ", err)
+	}
+	return
 }
 
 func (sp *shadowsocksParent) connect(url *URL) (net.Conn, error) {
-	c, err := ss.Dial(url.HostPort, sp.server, sp.cipher.Copy())
+	c, err := ss.Dial(url.HostPort, sp.server, sp.cipher.Copy(), sp.obfs)
 	if err != nil {
 		errl.Printf("can't connect to shadowsocks parent %s for %s: %v\n",
 			sp.server, url.HostPort, err)
