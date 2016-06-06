@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/cyfdecyf/bufio"
+	"io"
 	"net"
 	"strconv"
 	"strings"
-	"time"
 	"sync"
+	"time"
+
+	"github.com/cyfdecyf/bufio"
 )
 
 const CRLF = "\r\n"
@@ -484,7 +486,7 @@ func readContinuedLineSlice(r *bufio.Reader) ([]byte, error) {
 
 	// Read the first line.
 	line, err := r.ReadSlice('\n')
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return nil, err
 	}
 
