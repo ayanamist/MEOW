@@ -125,6 +125,16 @@ func initDomainList(domainListFile string, domainType DomainType) {
 		if domain == "" {
 			continue
 		}
+		if (domainType == domainTypeDirect) {
+			ip, ipNet, err := net.ParseCIDR(domain)
+			if err == nil {
+				CNIPDataStart = append(CNIPDataStart, IP4toInt(ip))
+				ones, _ := ipNet.Mask.Size()
+				CNIPDataNum = append(CNIPDataNum, 1 << uint(32 - ones))
+				debug.Printf("Loaded cidr %s as type %v", domain, domainType)
+				continue
+			}
+		}
 		debug.Printf("Loaded domain %s as type %v", domain, domainType)
 		domainList.Domain[domain] = domainType
 	}

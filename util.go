@@ -431,3 +431,23 @@ func searchRange(start, end int, f func(int) bool) int {
 	}
 	return i
 }
+
+func IP4toInt(IPv4Addr net.IP) uint32 {
+	bits := strings.Split(IPv4Addr.String(), ".")
+
+	b0, _ := strconv.Atoi(bits[0])
+	b1, _ := strconv.Atoi(bits[1])
+	b2, _ := strconv.Atoi(bits[2])
+	b3, _ := strconv.Atoi(bits[3])
+
+	var sum uint32
+
+	// left shifting 24,16,8,0 and bitwise OR
+
+	sum += uint32(b0) << 24
+	sum += uint32(b1) << 16
+	sum += uint32(b2) << 8
+	sum += uint32(b3)
+
+	return sum
+}

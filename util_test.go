@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/cyfdecyf/bufio"
+	"net"
+	"fmt"
 )
 
 func TestASCIIToUpper(t *testing.T) {
@@ -306,5 +308,13 @@ func TestHostIsIP(t *testing.T) {
 				t.Error(td.host, "is NOT private IP address")
 			}
 		}
+	}
+}
+
+func TestIP4toInt(t *testing.T) {
+	var want uint32 = 1653276013
+	got := IP4toInt(net.IPv4(98, 138, 253, 109))
+	if want != got {
+		t.Errorf("want %v, got %v", want, got)
 	}
 }
