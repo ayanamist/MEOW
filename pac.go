@@ -80,7 +80,10 @@ function host2Domain(host) {
 function FindProxyForURL(url, host) {
 	if (url.substring(0,4) == "ftp:")
 		return direct;
-	if (host.indexOf(".local", host.length - 6) !== -1) {
+	if (host.substring(host.length - 6, host.length) === ".local") {
+		return direct;
+	}
+	if (host.substring(host.length - 3, host.length) === ".cn") {
 		return direct;
 	}
 	return (directAcc[host] || directAcc[host2Domain(host)]) ? direct : httpProxy;
