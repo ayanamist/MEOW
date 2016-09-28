@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
-	"github.com/cyfdecyf/bufio"
 	"strings"
 	"testing"
+	"bufio"
 )
 
 func TestSendBodyChunked(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSendBodyChunked(t *testing.T) {
 			r := bufio.NewReaderSize(strings.NewReader(td.raw), size)
 			w := new(bytes.Buffer)
 
-			if err := sendBodyChunked(w, r, size); err != nil {
+			if err := sendBodyChunked(w, r); err != nil {
 				t.Fatalf("sent data %q err: %v\n", w.Bytes(), err)
 			}
 			if td.want == "" {

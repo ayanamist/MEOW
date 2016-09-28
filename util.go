@@ -13,8 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-
-	"github.com/cyfdecyf/bufio"
 )
 
 const isWindows = runtime.GOOS == "windows"
@@ -243,43 +241,6 @@ func expandTilde(pth string) string {
 		return path.Join(home, pth[1:])
 	}
 	return pth
-}
-
-// copyN copys N bytes from src to dst, reading at most rdSize for each read.
-// rdSize should <= buffer size of the buffered reader.
-// Returns any encountered error.
-func copyN(dst io.Writer, src *bufio.Reader, n, rdSize int) (err error) {
-	// Most of the copy is copied from io.Copy
-	for n > 0 {
-		var b []byte
-		var er error
-		if n > rdSize {
-			b, er = src.ReadN(rdSize)
-		} else {
-			b, er = src.ReadN(n)
-		}
-		nr := len(b)
-		n -= nr
-		if nr > 0 {
-			nw, ew := dst.Write(b)
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
-			}
-		}
-		if er == io.EOF {
-			break
-		}
-		if er != nil {
-			err = er
-			break
-		}
-	}
-	return err
 }
 
 func md5sum(ss ...string) string {

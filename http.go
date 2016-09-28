@@ -10,8 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/cyfdecyf/bufio"
+	"bufio"
 )
 
 const CRLF = "\r\n"
@@ -81,7 +80,7 @@ func (r *Request) reset() {
 		r.rawByte = b
 		r.raw = raw
 	} else {
-		r.rawByte = httpBuf.Get()
+		r.rawByte = make([]byte, httpBufSize)
 		r.raw = bytes.NewBuffer(r.rawByte[:0]) // must use 0 length slice
 	}
 }
@@ -130,7 +129,6 @@ func (r *Request) hasSent() bool {
 
 func (r *Request) releaseBuf() {
 	if r.raw != nil {
-		httpBuf.Put(r.rawByte)
 		r.rawByte = nil
 		r.raw = nil
 	}
@@ -190,14 +188,13 @@ func (rp *Response) reset() {
 		rp.rawByte = b
 		rp.raw = raw
 	} else {
-		rp.rawByte = httpBuf.Get()
+		rp.rawByte = make([]byte, httpBufSize)
 		rp.raw = bytes.NewBuffer(rp.rawByte[:0])
 	}
 }
 
 func (rp *Response) releaseBuf() {
 	if rp.raw != nil {
-		httpBuf.Put(rp.rawByte)
 		rp.rawByte = nil
 		rp.raw = nil
 	}
@@ -591,6 +588,9 @@ func parseRequest(c *clientConn, r *Request) (err error) {
 		}
 		return err
 	}
+	t := make([]byte, len(s))
+	copy(t, s)
+	s = t
 	c.unsetReadTimeout("parseRequest")
 	// debug.Printf("Request line %s", s)
 
@@ -668,6 +668,9 @@ func parseResponse(sv *serverConn, r *Request, rp *Response) (err error) {
 		// is caused by GFW.
 		return err
 	}
+	t := make([]byte, len(s))
+	copy(t, s)
+	s = t
 	// debug.Printf("Response line %s", s)
 
 	// response status line parsing

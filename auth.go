@@ -5,13 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/cyfdecyf/bufio"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
+	"bufio"
 )
 
 const (

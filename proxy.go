@@ -1,20 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
+	"os"
 	"strings"
 	"sync"
-	"time"
-	"os"
 	"syscall"
+	"time"
 
-	"github.com/cyfdecyf/bufio"
-	"github.com/cyfdecyf/leakybuf"
 	ss "github.com/shadowsocks/shadowsocks-go/shadowsocks"
 )
 
@@ -31,10 +31,6 @@ import (
 // In practice, there are sites using cookies larger than 4096 bytes,
 // e.g. www.fitbit.com. So set http buffer size to 8192 to be safe.
 const httpBufSize = 8192
-
-// Hold at most 4MB memory as buffer for parsing http request/response and
-// holding post data.
-var httpBuf = leakybuf.NewLeakyBuf(512, httpBufSize)
 
 // If no keep-alive header in response, use this as the keep-alive value.
 const defaultServerConnTimeout = 5 * time.Second
@@ -69,7 +65,6 @@ const (
 type serverConn struct {
 	net.Conn
 	bufRd       *bufio.Reader
-	buf         []byte // buffer for the buffered reader
 	hostPort    string
 	state       serverConnState
 	willCloseOn time.Time
@@ -79,7 +74,6 @@ type serverConn struct {
 type clientConn struct {
 	net.Conn // connection to the proxy client
 	bufRd    *bufio.Reader
-	buf      []byte // buffer for the buffered reader
 	proxy    Proxy
 }
 
@@ -183,11 +177,9 @@ func (hp *httpProxy) Serve(wg *sync.WaitGroup) {
 }
 
 func newClientConn(cli net.Conn, proxy Proxy) *clientConn {
-	buf := httpBuf.Get()
 	c := &clientConn{
 		Conn:  cli,
-		buf:   buf,
-		bufRd: bufio.NewReaderFromBuf(cli, buf),
+		bufRd: bufio.NewReader(cli),
 		proxy: proxy,
 	}
 	if debug {
@@ -200,8 +192,6 @@ func newClientConn(cli net.Conn, proxy Proxy) *clientConn {
 func (c *clientConn) releaseBuf() {
 	if c.bufRd != nil {
 		// debug.Println("release client buffer")
-		httpBuf.Put(c.buf)
-		c.buf = nil
 		c.bufRd = nil
 	}
 }
@@ -338,12 +328,6 @@ func dbgPrintRq(c *clientConn, r *Request, direct bool) {
 	}
 }
 
-type SinkWriter struct{}
-
-func (s SinkWriter) Write(p []byte) (int, error) {
-	return len(p), nil
-}
-
 func (c *clientConn) serve() {
 	var r Request
 	var rp Response
@@ -360,7 +344,7 @@ func (c *clientConn) serve() {
 	// Refer to implementation.md for the design choices on parsing the request
 	// and response.
 	for {
-		if c.bufRd == nil || c.buf == nil {
+		if c.bufRd == nil {
 			panic("client read buffer nil")
 		}
 
@@ -420,7 +404,7 @@ func (c *clientConn) serve() {
 				if r.hasBody() {
 					// skip request body
 					debug.Printf("cli(%s) skip request body %v\n", c.RemoteAddr(), &r)
-					sendBody(SinkWriter{}, c.bufRd, int(r.ContLen), r.Chunking)
+					sendBody(ioutil.Discard, c.bufRd, r.ContLen, r.Chunking)
 				}
 				continue
 			}
@@ -552,7 +536,7 @@ func (c *clientConn) readResponse(sv *serverConn, r *Request, rp *Response) (err
 	rp.releaseBuf()
 
 	if rp.hasBody(r.Method) {
-		if err = sendBody(c, sv.bufRd, int(rp.ContLen), rp.Chunking); err != nil {
+		if err = sendBody(c, sv.bufRd, rp.ContLen, rp.Chunking); err != nil {
 			if debug {
 				debug.Printf("cli(%s) send body %v\n", c.RemoteAddr(), err)
 			}
@@ -738,16 +722,13 @@ func (sv *serverConn) isDirect() bool {
 
 func (sv *serverConn) initBuf() {
 	if sv.bufRd == nil {
-		sv.buf = httpBuf.Get()
-		sv.bufRd = bufio.NewReaderFromBuf(sv, sv.buf)
+		sv.bufRd = bufio.NewReader(sv)
 	}
 }
 
 func (sv *serverConn) releaseBuf() {
 	if sv.bufRd != nil {
 		// debug.Println("release server buffer")
-		httpBuf.Put(sv.buf)
-		sv.buf = nil
 		sv.bufRd = nil
 	}
 }
@@ -769,15 +750,8 @@ func (sv *serverConn) mayBeClosed() bool {
 // very long time.
 const connectBufSize = 4096
 
-// Hold at most 2M memory for connection buffer. This can support 256
-// concurrent connect method.
-var connectBuf = leakybuf.NewLeakyBuf(512, connectBufSize)
-
 func copyServer2Client(sv *serverConn, c *clientConn, r *Request) (err error) {
-	buf := connectBuf.Get()
-	defer func() {
-		connectBuf.Put(buf)
-	}()
+	buf := make([]byte, connectBufSize)
 
 	/*
 		// force retry for debugging
@@ -859,12 +833,9 @@ func copyClient2Server(c *clientConn, sv *serverConn, r *Request, srvStopped not
 		c.releaseBuf()
 	}
 
-	buf := connectBuf.Get()
-	defer func() {
-		connectBuf.Put(buf)
-	}()
+	buf := make([]byte, connectBufSize)
 	for {
-		// debug.Println("908: cli->srv")
+		debug.Println("908: cli->srv")
 		if n, err = c.Read(buf); err != nil {
 			if isErrTimeout(err) && !srvStopped.hasNotified() {
 				debug.Printf("911: cli(%s)->srv(%s) timeout\n", c.RemoteAddr(), r.URL.HostPort)
@@ -880,7 +851,7 @@ func copyClient2Server(c *clientConn, sv *serverConn, r *Request, srvStopped not
 			debug.Printf("921: cli->srv write err: %v\n", err)
 			return
 		}
-		// debug.Printf("924: cli(%s)->srv(%s) sent %d bytes data\n", c.RemoteAddr(), r.URL.HostPort, n)
+		debug.Printf("924: cli(%s)->srv(%s) sent %d bytes data\n", c.RemoteAddr(), r.URL.HostPort, n)
 	}
 }
 
@@ -923,7 +894,7 @@ func (sv *serverConn) doConnect(r *Request, c *clientConn) (err error) {
 		// Note: there's no other code closing the server connection for CONNECT.
 	}()
 
-	// debug.Printf("doConnect: srv(%s)->cli(%s)\n", r.URL.HostPort, c.RemoteAddr())
+	debug.Printf("doConnect: srv(%s)->cli(%s)\n", r.URL.HostPort, c.RemoteAddr())
 	err = copyServer2Client(sv, c, r)
 	if isErrTimeout(err) || isErrConnReset(err) || isHttpErrCode(err) {
 		srvStopped.notify()
@@ -932,7 +903,7 @@ func (sv *serverConn) doConnect(r *Request, c *clientConn) (err error) {
 		// close client connection to force read from client in copyClient2Server return
 		c.Conn.Close()
 	}
-	err = <- cli2srvErr
+	err = <-cli2srvErr
 	if err != nil {
 		return err
 	}
@@ -994,7 +965,7 @@ func (sv *serverConn) sendRequestBody(r *Request, c *clientConn) (err error) {
 		return
 	}
 
-	err = sendBody(newServerWriter(r, sv), c.bufRd, int(r.ContLen), r.Chunking)
+	err = sendBody(newServerWriter(r, sv), c.bufRd, r.ContLen, r.Chunking)
 	if err != nil {
 		errl.Printf("cli(%s) send request body error %v %s\n", c.RemoteAddr(), err, r)
 		if isErrOpWrite(err) {
@@ -1022,12 +993,12 @@ func (sv *serverConn) doRequest(c *clientConn, r *Request, rp *Response) (err er
 }
 
 // Send response body if header specifies content length
-func sendBodyWithContLen(w io.Writer, r *bufio.Reader, contLen int) (err error) {
+func sendBodyWithContLen(w io.Writer, r *bufio.Reader, contLen int64) (err error) {
 	// debug.Println("Sending body with content length", contLen)
 	if contLen == 0 {
 		return
 	}
-	if err = copyN(w, r, contLen, httpBufSize); err != nil {
+	if _, err = io.CopyN(w, r, contLen); err != nil {
 		debug.Println("sendBodyWithContLen error:", err)
 	}
 	return
@@ -1068,12 +1039,12 @@ func skipCRLF(r *bufio.Reader) (err error) {
 // Send response body if header specifies chunked encoding. rdSize specifies
 // the size of each read on Reader, it should be set to be the buffer size of
 // the Reader, this parameter is added for testing.
-func sendBodyChunked(w io.Writer, r *bufio.Reader, rdSize int) (err error) {
+func sendBodyChunked(w io.Writer, r *bufio.Reader) (err error) {
 	// debug.Println("Sending chunked body")
 	for {
 		var s []byte
 		// Read chunk size line, ignore chunk extension if any.
-		if s, err = r.PeekSlice('\n'); err != nil {
+		if s, err = r.ReadSlice('\n'); err != nil {
 			errl.Println("peek chunk size:", err)
 			return
 		}
@@ -1098,7 +1069,6 @@ func sendBodyChunked(w io.Writer, r *bufio.Reader, rdSize int) (err error) {
 			}
 		*/
 		if size == 0 {
-			r.Skip(len(s))
 			if err = skipCRLF(r); err != nil {
 				return
 			}
@@ -1107,12 +1077,16 @@ func sendBodyChunked(w io.Writer, r *bufio.Reader, rdSize int) (err error) {
 			}
 			return
 		}
+		if _, err = w.Write(s); err != nil {
+			debug.Println("copy chunked header:", err)
+			return
+		}
 		// RFC 2616 19.3 only suggest tolerating single LF for
 		// headers, not for chunked encoding. So assume the server will send
 		// CRLF. If not, the following parse int may find errors.
-		total := len(s) + int(size) + 2 // total data size for this chunk, including ending CRLF
+		total := size + 2 // total data size for this chunk, including ending CRLF
 		// PeekSlice will not advance reader, so we can just copy total sized data.
-		if err = copyN(w, r, total, rdSize); err != nil {
+		if _, err = io.CopyN(w, r, total); err != nil {
 			debug.Println("copy chunked data:", err)
 			return
 		}
@@ -1125,7 +1099,8 @@ func sendBodySplitIntoChunk(w io.Writer, r *bufio.Reader) (err error) {
 	// debug.Printf("sendBodySplitIntoChunk called\n")
 	var b []byte
 	for {
-		b, err = r.ReadNext()
+		b = make([]byte, r.Buffered())
+		_, err = r.Read(b)
 		// debug.Println("split into chunk n =", n, "err =", err)
 		if err != nil {
 			if err == io.EOF {
@@ -1158,15 +1133,15 @@ func sendBodySplitIntoChunk(w io.Writer, r *bufio.Reader) (err error) {
 }
 
 // Send message body.
-func sendBody(w io.Writer, bufRd *bufio.Reader, contLen int, chunk bool) (err error) {
+func sendBody(w io.Writer, bufRd *bufio.Reader, contLen int64, chunk bool) (err error) {
 	// chunked encoding has precedence over content length
 	// meow does not sanitize response header, but can correctly handle it
 	if chunk {
-		err = sendBodyChunked(w, bufRd, httpBufSize)
+		err = sendBodyChunked(w, bufRd)
 	} else if contLen >= 0 {
 		// It's possible to have content length 0 if server response has no
 		// body.
-		err = sendBodyWithContLen(w, bufRd, int(contLen))
+		err = sendBodyWithContLen(w, bufRd, contLen)
 	} else {
 		// Must be reading server response here, because sendBody is called in
 		// reading response iff chunked or content length > 0.

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cyfdecyf/bufio"
 	"net/url"
+	"bufio"
 )
 
 const (
@@ -396,7 +396,7 @@ func (p configParser) ParseSshServer(val string) {
 	config.SshServer = append(config.SshServer, val)
 }
 
-var http struct {
+var httpParentConfig struct {
 	parent    *httpParent
 	serverCnt int
 	passwdCnt int
@@ -407,9 +407,9 @@ func (p configParser) ParseHttpParent(val string) {
 		Fatal("parent http server", err)
 	}
 	config.saveReqLine = true
-	http.parent = newHttpParent(val)
-	parentProxy.add(http.parent)
-	http.serverCnt++
+	httpParentConfig.parent = newHttpParent(val)
+	parentProxy.add(httpParentConfig.parent)
+	httpParentConfig.serverCnt++
 	configNeedUpgrade = true
 }
 
@@ -417,11 +417,11 @@ func (p configParser) ParseHttpUserPasswd(val string) {
 	if !isUserPasswdValid(val) {
 		Fatal("httpUserPassword syntax wrong, should be in the form of user:passwd")
 	}
-	if http.passwdCnt >= http.serverCnt {
+	if httpParentConfig.passwdCnt >= httpParentConfig.serverCnt {
 		Fatal("must specify httpParent before corresponding httpUserPasswd")
 	}
-	http.parent.initAuth(val)
-	http.passwdCnt++
+	httpParentConfig.parent.initAuth(val)
+	httpParentConfig.passwdCnt++
 }
 
 func (p configParser) ParseLoadBalance(val string) {

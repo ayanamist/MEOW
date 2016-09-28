@@ -5,10 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/cyfdecyf/bufio"
 	"net"
-	"fmt"
+	"bufio"
 )
 
 func TestASCIIToUpper(t *testing.T) {
@@ -183,23 +181,6 @@ func TestParseIntFromBytes(t *testing.T) {
 		}
 		if val != td.val {
 			t.Errorf("%s base %d got wrong value: %d\n", td.raw, td.base, val)
-		}
-	}
-}
-
-func TestCopyN(t *testing.T) {
-	testStr := "go is really a nice language"
-	for _, step := range []int{4, 9, 17, 32} {
-		src := bufio.NewReader(strings.NewReader(testStr))
-		dst := new(bytes.Buffer)
-
-		err := copyN(dst, src, len(testStr), step)
-		if err != nil {
-			t.Error("unexpected err:", err)
-			break
-		}
-		if dst.String() != testStr {
-			t.Errorf("step %d want %q, got: %q\n", step, testStr, dst.Bytes())
 		}
 	}
 }

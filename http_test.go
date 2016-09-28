@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
-	"github.com/cyfdecyf/bufio"
 	"strings"
 	"testing"
 	"time"
+	"bufio"
 )
 
 func TestParseRequestURI(t *testing.T) {

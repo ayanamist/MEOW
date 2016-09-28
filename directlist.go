@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/cyfdecyf/bufio"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"bufio"
 )
 
 type DomainList struct {
