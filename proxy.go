@@ -179,7 +179,7 @@ func (hp *httpProxy) Serve(wg *sync.WaitGroup) {
 func newClientConn(cli net.Conn, proxy Proxy) *clientConn {
 	c := &clientConn{
 		Conn:  cli,
-		bufRd: bufio.NewReader(cli),
+		bufRd: bufio.NewReaderSize(cli, 64*1024),
 		proxy: proxy,
 	}
 	if debug {
