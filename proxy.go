@@ -9,6 +9,9 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -276,7 +279,7 @@ func isSelfRequest(r *Request) bool {
 	// But if client PAC setting is using meow server's DNS name, we can't
 	// decide if the request is for meow itself (need reverse lookup).
 	// So if request path seems like getting PAC, simply return true.
-	if r.URL.Path == "/pac" || strings.HasPrefix(r.URL.Path, "/pac?") {
+	if r.URL.Path == "/pac" || strings.HasPrefix(r.URL.Path, "/pac?") || strings.HasPrefix(r.URL.Path, "/debug/pprof/") {
 		return true
 	}
 	r.URL.ParseHostPort(r.Header.Host)
@@ -285,6 +288,24 @@ func isSelfRequest(r *Request) bool {
 	}
 	debug.Printf("fixed request with no host in request line %s\n", r)
 	return false
+}
+
+type respCaptureWriter struct {
+	status int
+	header http.Header
+	body   *bytes.Buffer
+}
+
+func (w *respCaptureWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *respCaptureWriter) Write(b []byte) (int, error) {
+	return w.body.Write(b)
+}
+
+func (w *respCaptureWriter) WriteHeader(s int) {
+	w.status = s
 }
 
 func (c *clientConn) serveSelfURL(r *Request) (err error) {
@@ -298,6 +319,30 @@ func (c *clientConn) serveSelfURL(r *Request) (err error) {
 		sendPAC(c)
 		// PAC header contains connection close, send non nil error to close
 		// client connection.
+		return errPageSent
+	}
+	if strings.HasPrefix(r.URL.Path, "/debug/pprof/") {
+		resp := &respCaptureWriter{
+			status: http.StatusOK,
+			header: http.Header(make(map[string][]string)),
+			body:   new(bytes.Buffer),
+		}
+		req := &http.Request{
+			Method: r.Method,
+		}
+		req.URL, _ = url.Parse(r.URL.String())
+		http.DefaultServeMux.ServeHTTP(resp, req)
+		if resp.Header().Get("Content-Type") == "" {
+			resp.Header().Set("Content-Type", "text/html; charset=utf-8")
+		}
+		response := &http.Response{
+			StatusCode: resp.status,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     resp.header,
+			Body:       ioutil.NopCloser(resp.body),
+		}
+		response.Write(c)
 		return errPageSent
 	}
 end:
