@@ -11,9 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"net/url"
 	"bufio"
+	"net/url"
 )
 
 const (
@@ -57,7 +56,7 @@ type Config struct {
 	RejectFile string
 
 	// not configurable in config file
-	PrintVer        bool
+	PrintVer bool
 
 	// not config option
 	saveReqLine bool // for http and meow parent, should save request line from client
@@ -67,6 +66,7 @@ type Config struct {
 
 var config Config
 var configNeedUpgrade bool // whether should upgrade config file
+var dialer net.Dialer
 
 func printVersion() {
 	fmt.Println("MEOW version", version)
@@ -556,7 +556,9 @@ func (p configParser) ParseReadTimeout(val string) {
 }
 
 func (p configParser) ParseDialTimeout(val string) {
-	config.DialTimeout = parseDuration(val, "dialTimeout")
+	dialer = net.Dialer{
+		Timeout: parseDuration(val, "dialTimeout"),
+	}
 }
 
 func (p configParser) ParseJudgeByIP(val string) {

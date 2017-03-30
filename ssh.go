@@ -1,14 +1,13 @@
 package main
 
 import (
-	"net"
 	"os/exec"
 	"strings"
 	"time"
 )
 
 func SshRunning(socksServer string) bool {
-	c, err := net.Dial("tcp", socksServer)
+	c, err := dialer.Dial("tcp", socksServer)
 	if err != nil {
 		return false
 	}

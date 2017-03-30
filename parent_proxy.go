@@ -267,7 +267,7 @@ func (parent *ParentWithLatency) updateLatency(wg *sync.WaitGroup) {
 	var total time.Duration
 	for i := 0; i < N; i++ {
 		now := time.Now()
-		cn, err := net.Dial("tcp", ipPort)
+		cn, err := dialer.Dial("tcp", ipPort)
 		if err != nil {
 			debug.Println("latency update dial:", err)
 			total += time.Minute // 1 minute as penalty
@@ -507,7 +507,7 @@ func (hp *httpParent) initAuth(userPasswd string) {
 }
 
 func (hp *httpParent) connect(url *URL) (net.Conn, error) {
-	c, err := net.Dial("tcp", hp.server)
+	c, err := dialer.Dial("tcp", hp.server)
 	if err != nil {
 		errl.Printf("can't connect to http parent %s for %s: %v\n",
 			hp.server, url.HostPort, err)
@@ -635,7 +635,7 @@ func (sp *socksParent) genConfig() string {
 }
 
 func (sp *socksParent) connect(url *URL) (net.Conn, error) {
-	c, err := net.Dial("tcp", sp.server)
+	c, err := dialer.Dial("tcp", sp.server)
 	if err != nil {
 		errl.Printf("can't connect to socks parent %s for %s: %v\n",
 			sp.server, url.HostPort, err)

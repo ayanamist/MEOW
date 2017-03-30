@@ -651,7 +651,7 @@ func (c *clientConn) getServerConn(r *Request) (*serverConn, error) {
 func connectDirect2(url *URL, recursive bool) (net.Conn, error) {
 	var c net.Conn
 	var err error
-	c, err = net.Dial("tcp", url.HostPort)
+	c, err = dialer.Dial("tcp", url.HostPort)
 	if err != nil {
 		debug.Printf("error direct connect to: %s %v\n", url.HostPort, err)
 		if isErrTooManyOpenFd(err) && !recursive {
