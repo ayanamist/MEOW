@@ -1,18 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
-	"bufio"
-	"net/url"
 )
 
 const (

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	ss "github.com/shadowsocks/shadowsocks-go/shadowsocks"
-	"golang.org/x/net/http2"
 )
 
 // Interface that all types of parent proxies should support.
@@ -385,13 +384,13 @@ func (s httpsConn) String() string {
 func newHttpsParent(server string) *httpsParent {
 	return &httpsParent{
 		server: server,
-		tr: &http2.Transport{
-			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-				cfg.InsecureSkipVerify = true
-				return tls.Dial("tcp", server, cfg)
+		tr: &http.Transport{
+			DialTLS: func(network, addr string) (net.Conn, error) {
+				return tls.Dial("tcp", server, &tls.Config{
+					InsecureSkipVerify: true,
+				})
 			},
 			DisableCompression: true,
-			AllowHTTP:          true,
 		}}
 }
 
