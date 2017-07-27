@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
@@ -14,10 +13,12 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	ss "github.com/shadowsocks/shadowsocks-go/shadowsocks"
+	"golang.org/x/net/http2"
 )
 
 // Interface that all types of parent proxies should support.
@@ -320,14 +321,13 @@ func updateParentProxyLatency() {
 type httpsParent struct {
 	server     string
 	userPasswd string // for upgrade config
-	authHeader []byte
 	tr         http.RoundTripper
 }
 
 type httpsConn struct {
 	parent *httpsParent
-	pr     *io.PipeReader
-	pw     *io.PipeWriter
+	pr     io.ReadCloser
+	pw     io.WriteCloser
 }
 
 type httpsAddr struct {
@@ -357,7 +357,7 @@ func (s httpsConn) Close() error {
 }
 
 func (s httpsConn) LocalAddr() net.Addr {
-	return &net.IPAddr{net.IP{127, 0, 0, 1}, ""}
+	return &net.IPAddr{IP: net.IP{127, 0, 0, 1}, Zone: ""}
 }
 
 func (s httpsConn) RemoteAddr() net.Addr {
@@ -365,6 +365,7 @@ func (s httpsConn) RemoteAddr() net.Addr {
 }
 
 func (s httpsConn) SetDeadline(t time.Time) error {
+	// TODO
 	return nil
 }
 
@@ -374,6 +375,7 @@ func (s httpsConn) SetReadDeadline(t time.Time) error {
 }
 
 func (s httpsConn) SetWriteDeadline(t time.Time) error {
+	// TODO
 	return nil
 }
 
@@ -382,13 +384,15 @@ func (s httpsConn) String() string {
 }
 
 func newHttpsParent(server string) *httpsParent {
+	server = strings.Trim(server, "/")
 	return &httpsParent{
 		server: server,
-		tr: &http.Transport{
-			DialTLS: func(network, addr string) (net.Conn, error) {
-				return tls.Dial("tcp", server, &tls.Config{
-					InsecureSkipVerify: true,
-				})
+		tr: &http2.Transport{
+			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+				if cfg != nil {
+					cfg.InsecureSkipVerify = true
+				}
+				return tls.Dial("tcp", server, cfg)
 			},
 			DisableCompression: true,
 		}}
@@ -411,57 +415,24 @@ func (hp *httpsParent) initAuth(userPasswd string) {
 		return
 	}
 	hp.userPasswd = userPasswd
-	b64 := base64.StdEncoding.EncodeToString([]byte(userPasswd))
-	hp.authHeader = []byte(headerProxyAuthorization + ": Basic " + b64 + CRLF)
 }
 
 func (hp *httpsParent) connect(u *URL) (net.Conn, error) {
 	reqPr, reqPw := io.Pipe()
-	respPr, respPw := io.Pipe()
-	go func() {
-		for {
-			reader := bufio.NewReader(reqPr)
-			req, err := http.ReadRequest(reader)
-			if err != nil {
-				reqPr.CloseWithError(err)
-				respPw.CloseWithError(err)
-				return
-			}
-			req.URL.Opaque = req.RequestURI
-			req.URL.Host = hp.server
-			req.RequestURI = ""
-			if req.Header.Get("Connection") == "close" {
-				req.Header.Del("Connection")
-			}
-			if req.Method == http.MethodConnect {
-				if req.URL.Scheme == "" {
-					req.URL.Scheme = "https"
-				}
-				req.Body = reqPr
-				req.ContentLength = -1
-			}
-			resp, err := hp.tr.RoundTrip(req)
-			if err != nil {
-				reqPr.CloseWithError(err)
-				respPw.CloseWithError(err)
-				return
-			}
-			resp.Proto, resp.ProtoMajor, resp.ProtoMinor = "HTTP/1.1", 1, 1
-			if err := resp.Write(respPw); err != nil {
-				reqPr.CloseWithError(err)
-				respPw.CloseWithError(err)
-				resp.Body.Close()
-				return
-			}
-			resp.Body.Close()
-			if req.Method == http.MethodConnect {
-				break
-			}
-		}
+	req, _ := http.NewRequest(http.MethodConnect, "https://"+u.HostPort, reqPr)
+	req.Header.Set(headerProxyAuthorization, "Basic "+base64.StdEncoding.EncodeToString([]byte(hp.userPasswd)))
+	req.ContentLength = -1
+	resp, err := hp.tr.RoundTrip(req)
+	if err != nil {
 		reqPr.Close()
-		respPw.Close()
-	}()
-	return httpsConn{parent: hp, pr: respPr, pw: reqPw}, nil
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		reqPr.Close()
+		return nil, fmt.Errorf("tunnel fail: %s", resp.Status)
+	}
+	return httpsConn{parent: hp, pr: resp.Body, pw: reqPw}, nil
 }
 
 // http parent proxy
