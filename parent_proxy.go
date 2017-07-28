@@ -10,7 +10,6 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	ss "github.com/shadowsocks/shadowsocks-go/shadowsocks"
-	"golang.org/x/net/http2"
 )
 
 // Interface that all types of parent proxies should support.
@@ -318,125 +316,22 @@ func updateParentProxyLatency() {
 	}
 }
 
-type httpsParent struct {
-	server     string
-	userPasswd string // for upgrade config
-	tr         http.RoundTripper
-}
-
-type httpsConn struct {
-	parent *httpsParent
-	pr     io.ReadCloser
-	pw     io.WriteCloser
-}
-
-type httpsAddr struct {
-	server string
-}
-
-func (a httpsAddr) Network() string {
-	return "https"
-}
-
-func (a httpsAddr) String() string {
-	return a.server
-}
-
-func (s httpsConn) Read(b []byte) (n int, err error) {
-	return s.pr.Read(b)
-}
-
-func (s httpsConn) Write(b []byte) (n int, err error) {
-	return s.pw.Write(b)
-}
-
-func (s httpsConn) Close() error {
-	s.pr.Close()
-	s.pw.Close()
-	return nil
-}
-
-func (s httpsConn) LocalAddr() net.Addr {
-	return &net.IPAddr{IP: net.IP{127, 0, 0, 1}, Zone: ""}
-}
-
-func (s httpsConn) RemoteAddr() net.Addr {
-	return httpsAddr{server: s.parent.server}
-}
-
-func (s httpsConn) SetDeadline(t time.Time) error {
-	// TODO
-	return nil
-}
-
-func (s httpsConn) SetReadDeadline(t time.Time) error {
-	// TODO
-	return nil
-}
-
-func (s httpsConn) SetWriteDeadline(t time.Time) error {
-	// TODO
-	return nil
-}
-
-func (s httpsConn) String() string {
-	return "https parent proxy " + s.parent.server
-}
-
-func newHttpsParent(server string) *httpsParent {
+func newHttpsParent(server string) *httpParent {
 	server = strings.Trim(server, "/")
-	return &httpsParent{
+	return &httpParent{
+		dial: func(network, address string) (net.Conn, error) {
+			tlsCfg := &tls.Config{
+				InsecureSkipVerify: true,
+			}
+			return tls.DialWithDialer(&dialer, network, address, tlsCfg)
+		},
 		server: server,
-		tr: &http2.Transport{
-			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-				if cfg != nil {
-					cfg.InsecureSkipVerify = true
-				}
-				return tls.Dial("tcp", server, cfg)
-			},
-			DisableCompression: true,
-		}}
-}
-
-func (hp *httpsParent) getServer() string {
-	return hp.server
-}
-
-func (hp *httpsParent) genConfig() string {
-	if hp.userPasswd != "" {
-		return fmt.Sprintf("proxy = https://%s@%s", hp.userPasswd, hp.server)
-	} else {
-		return fmt.Sprintf("proxy = https://%s", hp.server)
 	}
-}
-
-func (hp *httpsParent) initAuth(userPasswd string) {
-	if userPasswd == "" {
-		return
-	}
-	hp.userPasswd = userPasswd
-}
-
-func (hp *httpsParent) connect(u *URL) (net.Conn, error) {
-	reqPr, reqPw := io.Pipe()
-	req, _ := http.NewRequest(http.MethodConnect, "https://"+u.HostPort, reqPr)
-	req.Header.Set(headerProxyAuthorization, "Basic "+base64.StdEncoding.EncodeToString([]byte(hp.userPasswd)))
-	req.ContentLength = -1
-	resp, err := hp.tr.RoundTrip(req)
-	if err != nil {
-		reqPr.Close()
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		reqPr.Close()
-		return nil, fmt.Errorf("tunnel fail: %s", resp.Status)
-	}
-	return httpsConn{parent: hp, pr: resp.Body, pw: reqPw}, nil
 }
 
 // http parent proxy
 type httpParent struct {
+	dial       func(network, address string) (net.Conn, error)
 	server     string
 	userPasswd string // for upgrade config
 	authHeader []byte
@@ -452,7 +347,10 @@ func (s httpConn) String() string {
 }
 
 func newHttpParent(server string) *httpParent {
-	return &httpParent{server: server}
+	return &httpParent{
+		dial:   dialer.Dial,
+		server: server,
+	}
 }
 
 func (hp *httpParent) getServer() string {
@@ -477,7 +375,7 @@ func (hp *httpParent) initAuth(userPasswd string) {
 }
 
 func (hp *httpParent) connect(url *URL) (net.Conn, error) {
-	c, err := dialer.Dial("tcp", hp.server)
+	c, err := hp.dial("tcp", hp.server)
 	if err != nil {
 		errl.Printf("can't connect to http parent %s for %s: %v\n",
 			hp.server, url.HostPort, err)
