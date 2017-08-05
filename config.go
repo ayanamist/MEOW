@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"path"
 	"reflect"
@@ -255,14 +254,12 @@ func parseMethodPasswdServer(val string) (method, passwd, server, param string, 
 
 // parse shadowsocks proxy
 func (pp proxyParser) ProxySs(val string) {
-	method, passwd, server, param, err := parseMethodPasswdServer(val)
+	method, passwd, server, _, err := parseMethodPasswdServer(val)
 	if err != nil {
 		Fatal("shadowsocks parent", err)
 	}
 	parent := newShadowsocksParent(server)
 	parent.initCipher(method, passwd)
-	paramValues, _ := url.ParseQuery(param)
-	parent.initObfs(paramValues.Get("obfs"))
 	parentProxy.add(parent)
 }
 
