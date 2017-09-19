@@ -11,7 +11,6 @@ import (
 	"os"
 
 	"github.com/cyfdecyf/color"
-	ss "github.com/shadowsocks/shadowsocks-go/shadowsocks"
 )
 
 type infoLogging bool
@@ -67,9 +66,6 @@ func initLog() {
 	}
 	errorLog = log.New(logFile, color.Red("[ERROR] "), log.LstdFlags)
 	debugLog = log.New(logFile, color.Blue("[DEBUG] "), log.LstdFlags)
-	if debug {
-		ss.SetDebug(ss.DebugLog(true))
-	}
 	requestLog = log.New(logFile, color.Green("[>>>>>] "), log.LstdFlags)
 	responseLog = log.New(logFile, color.Yellow("[<<<<<] "), log.LstdFlags)
 }

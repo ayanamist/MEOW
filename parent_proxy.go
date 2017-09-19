@@ -16,7 +16,8 @@ import (
 	"sync"
 	"time"
 
-	ss "github.com/shadowsocks/shadowsocks-go/shadowsocks"
+	ssCore "github.com/shadowsocks/go-shadowsocks2/core"
+	ssSocks "github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
 // Interface that all types of parent proxies should support.
@@ -391,7 +392,7 @@ type shadowsocksParent struct {
 	server string
 	method string // method and passwd are for upgrade config
 	passwd string
-	cipher *ss.Cipher
+	cipher ssCore.Cipher
 }
 
 type shadowsocksConn struct {
@@ -416,17 +417,13 @@ func (sp *shadowsocksParent) getServer() string {
 }
 
 func (sp *shadowsocksParent) genConfig() string {
-	method := sp.method
-	if method == "" {
-		method = "table"
-	}
-	return fmt.Sprintf("proxy = ss://%s:%s@%s", method, sp.passwd, sp.server)
+	return fmt.Sprintf("proxy = ss://%s:%s@%s", sp.method, sp.passwd, sp.server)
 }
 
 func (sp *shadowsocksParent) initCipher(method, passwd string) {
 	sp.method = method
 	sp.passwd = passwd
-	cipher, err := ss.NewCipher(method, passwd)
+	cipher, err := ssCore.PickCipher(method, nil, passwd)
 	if err != nil {
 		Fatal("create shadowsocks cipher:", err)
 	}
@@ -434,11 +431,18 @@ func (sp *shadowsocksParent) initCipher(method, passwd string) {
 }
 
 func (sp *shadowsocksParent) connect(url *URL) (net.Conn, error) {
-	c, err := ss.Dial(url.HostPort, sp.server, sp.cipher.Copy())
+	c, err := dialer.Dial("tcp", sp.server)
 	if err != nil {
-		errl.Printf("can't connect to shadowsocks parent %s for %s: %v\n",
-			sp.server, url.HostPort, err)
 		return nil, err
+	}
+	c.(*net.TCPConn).SetKeepAlive(true)
+	c = sp.cipher.StreamConn(c)
+	tgt := ssSocks.ParseAddr(url.HostPort)
+	if tgt == nil {
+		return nil, fmt.Errorf("unsupport addr: %s", url.HostPort)
+	}
+	if _, err := c.Write(tgt); err != nil {
+		return nil, fmt.Errorf("handshake: %v", err)
 	}
 	debug.Println("connected to:", url.HostPort, "via shadowsocks:", sp.server)
 	return shadowsocksConn{c, sp}, nil
