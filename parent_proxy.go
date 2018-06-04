@@ -456,13 +456,15 @@ func (hp *h2Parent) connect(url *URL) (net.Conn, error) {
 	resp, err := hp.tr.RoundTrip(req)
 	if err != nil {
 		pr.Close()
+		errl.Printf("can't connect to h2 parent %s for %s: roundtrip: %v\n",
+			hp.server, url.HostPort, err)
 		return nil, errors.Wrap(err, "RoundTrip")
 	}
 	if resp.StatusCode != http.StatusOK {
 		pr.Close()
 		resp.Body.Close()
-		errl.Printf("can't connect to h2 parent %s for %s: %v\n",
-			hp.server, url.HostPort, err)
+		errl.Printf("can't connect to h2 parent %s for %s: status: %v\n",
+			hp.server, url.HostPort, resp.Status)
 		return nil, errors.Errorf("tunnel failed %s", resp.Status)
 	}
 	debug.Printf("connected to: %s via h2 parent: %s\n",
