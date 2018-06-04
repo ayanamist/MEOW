@@ -195,6 +195,30 @@ func (pp proxyParser) ProxyHttp(val string) {
 	parentProxy.add(parent)
 }
 
+func (pp proxyParser) ProxyH2(val string) {
+	var userPasswd, server string
+
+	arr := strings.Split(val, "@")
+	if len(arr) == 1 {
+		server = arr[0]
+	} else if len(arr) == 2 {
+		userPasswd = arr[0]
+		server = arr[1]
+	} else {
+		Fatal("http parent proxy contains more than one @:", val)
+	}
+
+	if err := checkServerAddr(server); err != nil {
+		Fatal("parent http server", err)
+	}
+
+	config.saveReqLine = true
+
+	parent := newH2Parent(server)
+	parent.initAuth(userPasswd)
+	parentProxy.add(parent)
+}
+
 func (pp proxyParser) ProxyHttps(val string) {
 	var userPasswd, server string
 
@@ -408,6 +432,10 @@ func (p configParser) ParseHttpParent(val string) {
 	parentProxy.add(httpParentConfig.parent)
 	httpParentConfig.serverCnt++
 	configNeedUpgrade = true
+}
+
+func (p configParser) ParseH2Parent(val string) {
+	panic("why run here")
 }
 
 func (p configParser) ParseHttpUserPasswd(val string) {

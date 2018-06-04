@@ -4,20 +4,22 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"math/rand"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	ssCore "github.com/shadowsocks/go-shadowsocks2/core"
 	ssSocks "github.com/shadowsocks/go-shadowsocks2/socks"
+	"golang.org/x/net/http2"
 )
 
 // Interface that all types of parent proxies should support.
@@ -385,6 +387,134 @@ func (hp *httpParent) connect(url *URL) (net.Conn, error) {
 	debug.Printf("connected to: %s via http parent: %s\n",
 		url.HostPort, hp.server)
 	return httpConn{c, hp}, nil
+}
+
+// h2 parent proxy
+type h2Parent struct {
+	server     string
+	userPasswd string // for upgrade config
+	authStr    string
+
+	tr *http2.Transport
+}
+
+func newH2Parent(server string) *h2Parent {
+	hp := &h2Parent{
+		server: server,
+	}
+	nextProtos := []string{"h2"}
+	hp.tr = &http2.Transport{
+		DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+			conn, err := dialer.Dial("tcp", hp.server)
+			if err != nil {
+				return nil, err
+			}
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				tcpConn.SetNoDelay(true)
+			}
+			return tls.Client(conn, &tls.Config{
+				InsecureSkipVerify: true,
+				NextProtos:         nextProtos,
+			}), nil
+		},
+	}
+	return hp
+}
+
+func (hp *h2Parent) getServer() string {
+	return hp.server
+}
+
+func (hp *h2Parent) genConfig() string {
+	if hp.userPasswd != "" {
+		return fmt.Sprintf("proxy = h2://%s@%s", hp.userPasswd, hp.server)
+	} else {
+		return fmt.Sprintf("proxy = h2://%s", hp.server)
+	}
+}
+
+func (hp *h2Parent) initAuth(userPasswd string) {
+	if userPasswd == "" {
+		return
+	}
+	hp.userPasswd = userPasswd
+	b64 := base64.StdEncoding.EncodeToString([]byte(userPasswd))
+	hp.authStr = "Basic " + b64
+}
+
+func (hp *h2Parent) connect(url *URL) (net.Conn, error) {
+	pr, pw := io.Pipe()
+	req, err := http.NewRequest(http.MethodConnect, fmt.Sprintf("https://%s/", url.HostPort), pr)
+	if err != nil {
+		pr.Close()
+		return nil, errors.Wrap(err, "http.NewRequest")
+	}
+	req.ContentLength = -1
+	if hp.authStr != "" {
+		req.Header.Set("Proxy-Authorization", hp.authStr)
+	}
+	resp, err := hp.tr.RoundTrip(req)
+	if err != nil {
+		pr.Close()
+		return nil, errors.Wrap(err, "RoundTrip")
+	}
+	if resp.StatusCode != http.StatusOK {
+		pr.Close()
+		resp.Body.Close()
+		errl.Printf("can't connect to h2 parent %s for %s: %v\n",
+			hp.server, url.HostPort, err)
+		return nil, errors.Errorf("tunnel failed %s", resp.Status)
+	}
+	debug.Printf("connected to: %s via h2 parent: %s\n",
+		url.HostPort, hp.server)
+	return &PipeReadWriteCloser{resp.Body, pw, hp}, nil
+}
+
+type PipeReadWriteCloser struct {
+	pr io.ReadCloser
+	pw io.WriteCloser
+	hp *h2Parent
+}
+
+func (p *PipeReadWriteCloser) LocalAddr() net.Addr {
+	return &net.IPAddr{}
+}
+
+func (p *PipeReadWriteCloser) RemoteAddr() net.Addr {
+	return &net.IPAddr{}
+}
+
+func (p *PipeReadWriteCloser) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (p *PipeReadWriteCloser) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (p *PipeReadWriteCloser) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
+func (p *PipeReadWriteCloser) Close() error {
+	p.pw.Close()
+	return nil
+}
+
+func (p *PipeReadWriteCloser) Read(b []byte) (n int, err error) {
+	n, err = p.pr.Read(b)
+	if err != nil {
+		p.pr.Close()
+	}
+	return
+}
+
+func (p *PipeReadWriteCloser) Write(b []byte) (n int, err error) {
+	return p.pw.Write(b)
+}
+
+func (p *PipeReadWriteCloser) String() string {
+	return "h2 parent proxy " + p.hp.server
 }
 
 // shadowsocks parent proxy
