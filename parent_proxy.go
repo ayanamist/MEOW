@@ -503,12 +503,12 @@ func (p *PipeReadWriteCloser) Close() error {
 	return nil
 }
 
+func (p *PipeReadWriteCloser) CloseRead() error {
+	return p.pr.Close()
+}
+
 func (p *PipeReadWriteCloser) Read(b []byte) (n int, err error) {
-	n, err = p.pr.Read(b)
-	if err != nil {
-		p.pr.Close()
-	}
-	return
+	return p.pr.Read(b)
 }
 
 func (p *PipeReadWriteCloser) Write(b []byte) (n int, err error) {
@@ -517,6 +517,18 @@ func (p *PipeReadWriteCloser) Write(b []byte) (n int, err error) {
 
 func (p *PipeReadWriteCloser) String() string {
 	return "h2 parent proxy " + p.hp.server
+}
+
+func ensureCloseRead(i interface{}) {
+	if i == nil {
+		return
+	}
+	type closeReader interface {
+		CloseRead() error
+	}
+	if c, ok := i.(closeReader); ok {
+		c.CloseRead()
+	}
 }
 
 // shadowsocks parent proxy

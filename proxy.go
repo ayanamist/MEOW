@@ -376,6 +376,8 @@ func (c *clientConn) serve() {
 		c.Close()
 	}()
 
+	defer ensureCloseRead(sv)
+
 	// Refer to implementation.md for the design choices on parsing the request
 	// and response.
 	for {
@@ -473,6 +475,7 @@ func (c *clientConn) serve() {
 			// release buffer before putting back to pool can save memory.
 			sv.releaseBuf()
 			connPool.Put(sv)
+			sv = nil
 		} else {
 			if debug {
 				debug.Printf("cli(%s) server %s close conn\n", c.RemoteAddr(), sv.hostPort)
