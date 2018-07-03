@@ -10,15 +10,21 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
 	ssCore "github.com/shadowsocks/go-shadowsocks2/core"
 	ssSocks "github.com/shadowsocks/go-shadowsocks2/socks"
+	ssr "github.com/sun8911879/shadowsocksR"
+	ssrObfs "github.com/sun8911879/shadowsocksR/obfs"
+	ssrProtocol "github.com/sun8911879/shadowsocksR/protocol"
+	ssrSsr "github.com/sun8911879/shadowsocksR/ssr"
 	"golang.org/x/net/http2"
 )
 
@@ -86,8 +92,7 @@ func printParentProxy(parent []ParentWithFail) {
 
 type ParentWithFail struct {
 	ParentProxy
-	fail int
-	sync.RWMutex
+	fail uint32
 }
 
 // Backup load balance strategy:
@@ -101,7 +106,7 @@ func (pp *backupParentPool) empty() bool {
 }
 
 func (pp *backupParentPool) add(parent ParentProxy) {
-	pp.parent = append(pp.parent, ParentWithFail{parent, 0, sync.RWMutex{}})
+	pp.parent = append(pp.parent, ParentWithFail{parent, 0})
 }
 
 func (pp *backupParentPool) connect(url *URL) (srvconn net.Conn, err error) {
@@ -123,11 +128,13 @@ func (pp *hashParentPool) connect(url *URL) (srvconn net.Conn, err error) {
 func (parent *ParentWithFail) connect(url *URL) (srvconn net.Conn, err error) {
 	const maxFailCnt = 30
 	srvconn, err = parent.ParentProxy.connect(url)
-	parent.Lock()
-	defer parent.Unlock()
 	if err != nil {
-		if parent.fail < maxFailCnt {
-			parent.fail++
+		if info {
+			info.Printf("connect %s error: %v", url.HostPort, err)
+		}
+		u := atomic.AddUint32(&(parent.fail), 1)
+		if u > maxFailCnt {
+			atomic.CompareAndSwapUint32(&(parent.fail), u, maxFailCnt)
 		}
 		return
 	}
@@ -148,9 +155,7 @@ func connectInOrder(url *URL, pp []ParentWithFail, start int) (srvconn net.Conn,
 		proxyId := (start + i) % nproxy
 		parent := &pp[proxyId]
 		// skip failed server, but try it with some probability
-		parent.RLock()
-		fail := parent.fail
-		parent.RUnlock()
+		fail := int(atomic.LoadUint32(&(parent.fail)))
 		if fail > 0 && rand.Intn(fail+baseFailCnt) != 0 {
 			skipped = append(skipped, proxyId)
 			continue
@@ -735,4 +740,125 @@ func (sp *socksParent) connect(url *URL) (net.Conn, error) {
 	debug.Println("connected to:", url.HostPort, "via socks server:", sp.server)
 	// Now the socket can be used to pass data.
 	return socksConn{c, sp}, nil
+}
+
+func newSsrParent(server string) *ssrParent {
+	const ssrScheme = "ssr://"
+	if strings.ToLower(server[len(ssrScheme):]) == ssrScheme {
+		server = server[len(ssrScheme):]
+	}
+	parts := strings.Split(server, "/?")
+	if len(parts) > 2 {
+		Fatalf("invalid ssr, many /? sep: %s", server)
+	}
+	var firstPart, secondPart string
+	firstPart = parts[0]
+	if len(parts) == 2 {
+		secondPart = parts[1]
+	}
+	parts = strings.Split(firstPart, ":")
+	if len(parts) != 6 {
+		Fatalf("invalid ssr, many colons: %s", server)
+	}
+	p := &ssrParent{}
+	p.addr = parts[0] + ":" + parts[1]
+	p.protocol = parts[2]
+	p.method = parts[3]
+	p.obfs = parts[4]
+	k, err := base64.RawURLEncoding.DecodeString(parts[5])
+	if err != nil {
+		Fatalf("invalid ssr, invalid base64pass: %s", server)
+	}
+	p.key = string(k)
+	v, err := url.ParseQuery(secondPart)
+	if err != nil {
+		Fatalf("invalid ssr, invalid query %v: %s", err, server)
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(v.Get("obfsparam")); err != nil {
+		Fatalf("invalid ssr, invalid obfsparam %v: %s", err, server)
+	} else {
+		p.obfsParam = string(b)
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(v.Get("protoparam")); err != nil {
+		Fatalf("invalid ssr, invalid protoparam %v: %s", err, server)
+	} else {
+		p.protocolParam = string(b)
+	}
+	return p
+}
+
+type ssrParent struct {
+	addr          string
+	method        string
+	key           string
+	obfs          string
+	obfsParam     string
+	protocol      string
+	protocolParam string
+}
+
+func (p *ssrParent) connect(u *URL) (net.Conn, error) {
+	cipher, err := ssr.NewStreamCipher(p.method, p.key)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := dialer.Dial("tcp", p.addr)
+	if err != nil {
+		return nil, err
+	}
+
+	ssrconn := ssr.NewSSTCPConn(conn, cipher)
+	if ssrconn.Conn == nil || ssrconn.RemoteAddr() == nil {
+		return nil, errors.New("nil connection")
+	}
+
+	// should initialize obfs/protocol now
+	rs := strings.Split(ssrconn.RemoteAddr().String(), ":")
+	port, _ := strconv.Atoi(rs[1])
+
+	obfs := ssrObfs.NewObfs(p.obfs)
+	if obfs == nil {
+		return nil, errors.New("invalid obfs: " + p.obfs)
+	}
+	obfs.SetServerInfo(&ssrSsr.ServerInfoForObfs{
+		Host:   rs[0],
+		Port:   uint16(port),
+		TcpMss: 1460,
+		Param:  p.obfsParam,
+	})
+	obfs.SetData(obfs.GetData())
+	ssrconn.IObfs = obfs
+
+	proto := ssrProtocol.NewProtocol(p.protocol)
+	if proto == nil {
+		return nil, errors.New("invalid protocol: " + p.protocol)
+	}
+	proto.SetServerInfo(&ssrSsr.ServerInfoForObfs{
+		Host:   rs[0],
+		Port:   uint16(port),
+		TcpMss: 1460,
+		Param:  p.protocolParam,
+	})
+	proto.SetData(proto.GetData())
+	ssrconn.IProtocol = proto
+
+	if _, err := ssrconn.Write(ssSocks.ParseAddr(u.HostPort)); err != nil {
+		ssrconn.Close()
+		return nil, err
+	}
+	return ssrconn, nil
+}
+
+func (p *ssrParent) getServer() string {
+	return p.addr
+}
+
+func (p *ssrParent) genConfig() string {
+	return fmt.Sprintf("proxy = ssr://%s:%s:%s:%s:%s/?obfsparam=%s&protoparam=%s",
+		p.addr, p.protocol, p.method, p.obfs,
+		base64.RawURLEncoding.EncodeToString([]byte(p.key)),
+		base64.RawURLEncoding.EncodeToString([]byte(p.obfsParam)),
+		base64.RawURLEncoding.EncodeToString([]byte(p.protocolParam)),
+	)
 }

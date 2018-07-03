@@ -164,7 +164,7 @@ func isUserPasswdValid(val string) bool {
 // proxyParser provides functions to parse different types of parent proxy
 type proxyParser struct{}
 
-func (p proxyParser) ProxySocks5(val string) {
+func (pp proxyParser) ProxySocks5(val string) {
 	if err := checkServerAddr(val); err != nil {
 		Fatal("parent socks server", err)
 	}
@@ -284,6 +284,11 @@ func (pp proxyParser) ProxySs(val string) {
 	}
 	parent := newShadowsocksParent(server)
 	parent.initCipher(method, passwd)
+	parentProxy.add(parent)
+}
+
+func (pp proxyParser) ProxySsr(val string) {
+	parent := newSsrParent(val)
 	parentProxy.add(parent)
 }
 
@@ -435,6 +440,10 @@ func (p configParser) ParseHttpParent(val string) {
 }
 
 func (p configParser) ParseH2Parent(val string) {
+	panic("why run here")
+}
+
+func (p configParser) ParseSsrParent(val string) {
 	panic("why run here")
 }
 
