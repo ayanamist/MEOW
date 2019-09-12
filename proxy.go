@@ -376,8 +376,6 @@ func (c *clientConn) serve() {
 		c.Close()
 	}()
 
-	defer ensureCloseRead(sv)
-
 	// Refer to implementation.md for the design choices on parsing the request
 	// and response.
 	for {

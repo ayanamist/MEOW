@@ -25,7 +25,6 @@ import (
 	ssrObfs "github.com/sun8911879/shadowsocksR/obfs"
 	ssrProtocol "github.com/sun8911879/shadowsocksR/protocol"
 	ssrSsr "github.com/sun8911879/shadowsocksR/ssr"
-	"golang.org/x/net/http2"
 )
 
 // Interface that all types of parent proxies should support.
@@ -400,27 +399,32 @@ type h2Parent struct {
 	userPasswd string // for upgrade config
 	authStr    string
 
-	tr *http2.Transport
+	hc *http.Client
 }
 
 func newH2Parent(server string) *h2Parent {
 	hp := &h2Parent{
 		server: server,
 	}
-	nextProtos := []string{"h2"}
-	hp.tr = &http2.Transport{
-		DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-			conn, err := dialer.Dial("tcp", hp.server)
-			if err != nil {
-				return nil, err
-			}
-			if tcpConn, ok := conn.(*net.TCPConn); ok {
-				tcpConn.SetNoDelay(true)
-			}
-			return tls.Client(conn, &tls.Config{
+	hp.hc = &http.Client{
+		Transport: &http.Transport{
+			Dial: func(network, addr string) (net.Conn, error) {
+				conn, err := dialer.Dial(network, addr)
+				if err != nil {
+					return nil, err
+				}
+				if tcpConn, ok := conn.(*net.TCPConn); ok {
+					tcpConn.SetNoDelay(true)
+				}
+				return conn, nil
+			},
+			DisableCompression:    true,
+			ResponseHeaderTimeout: 10 * time.Second,
+			ForceAttemptHTTP2:     true,
+			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
-				NextProtos:         nextProtos,
-			}), nil
+				NextProtos:         []string{"h2"},
+			},
 		},
 	}
 	return hp
@@ -447,26 +451,33 @@ func (hp *h2Parent) initAuth(userPasswd string) {
 	hp.authStr = "Basic " + b64
 }
 
-func (hp *h2Parent) connect(url *URL) (net.Conn, error) {
+func (hp *h2Parent) connect(url *URL) (conn net.Conn, err error) {
 	pr, pw := io.Pipe()
-	req, err := http.NewRequest(http.MethodConnect, fmt.Sprintf("https://%s/", url.HostPort), pr)
+	defer func() {
+		if err != nil {
+			pr.Close()
+			pw.Close()
+		}
+	}()
+	req, err := http.NewRequest(http.MethodConnect, fmt.Sprintf("https://%s/", hp.server), pr)
 	if err != nil {
-		pr.Close()
 		return nil, errors.Wrap(err, "http.NewRequest")
 	}
 	req.ContentLength = -1
+	req.URL.Opaque = url.HostPort
+	req.Host = req.URL.Opaque
+	req.Header.Set("Proxy-Connection", "Keep-Alive")
+
 	if hp.authStr != "" {
 		req.Header.Set("Proxy-Authorization", hp.authStr)
 	}
-	resp, err := hp.tr.RoundTrip(req)
+	resp, err := hp.hc.Do(req)
 	if err != nil {
-		pr.Close()
 		errl.Printf("can't connect to h2 parent %s for %s: roundtrip: %v\n",
 			hp.server, url.HostPort, err)
 		return nil, errors.Wrap(err, "RoundTrip")
 	}
 	if resp.StatusCode != http.StatusOK {
-		pr.Close()
 		resp.Body.Close()
 		errl.Printf("can't connect to h2 parent %s for %s: status: %v\n",
 			hp.server, url.HostPort, resp.Status)
@@ -505,11 +516,11 @@ func (p *PipeReadWriteCloser) SetWriteDeadline(t time.Time) error {
 
 func (p *PipeReadWriteCloser) Close() error {
 	p.pw.Close()
+	go func() {
+		time.Sleep(10 * time.Second)
+		p.pr.Close()
+	}()
 	return nil
-}
-
-func (p *PipeReadWriteCloser) CloseRead() error {
-	return p.pr.Close()
 }
 
 func (p *PipeReadWriteCloser) Read(b []byte) (n int, err error) {
@@ -522,18 +533,6 @@ func (p *PipeReadWriteCloser) Write(b []byte) (n int, err error) {
 
 func (p *PipeReadWriteCloser) String() string {
 	return "h2 parent proxy " + p.hp.server
-}
-
-func ensureCloseRead(i interface{}) {
-	if i == nil {
-		return
-	}
-	type closeReader interface {
-		CloseRead() error
-	}
-	if c, ok := i.(closeReader); ok {
-		c.CloseRead()
-	}
 }
 
 // shadowsocks parent proxy
